@@ -6,6 +6,10 @@ Predict the status of a genetic biomarker important for brain cancer treatment.
 
 ----------------------------------
 
+## Registering process
+
+![registering](./media/registering_process.png)
+
 #### Folder structure
 ```
 root
@@ -25,9 +29,17 @@ root
 
 ##### Notebook descriptions
 
-1. [Convert_dicoms_to_rgb](./notebooks/Convert_dicoms_to_rgb.ipynb) Convert original Dicom files to RGB-PNG images. Channels are R: min-max normalized, G: CLAHE, B: histogram equalized.
+1. ~~[convert_dicoms_to_rgb](./notebooks/1-convert_dicoms_to_rgb.ipynb) Convert original Dicom files to RGB-PNG images. Channels are R: min-max normalized, G: CLAHE, B: histogram equalized.~~
 
-2. [cv-splits](./notebooks/cv-splits.ipynb) Split all train cohort BraTS21IDs into five folds stratified by MGMT_value.
+Note. There is a better way to preprocess data. See notebook [Case registration](./notebooks/3-case-registration.ipynb).
+
+2. [cv-splits](./notebooks/2-cv-splits.ipynb) Split all train cohort BraTS21IDs into five folds stratified by MGMT_value.
+
+3. [Case registration](./notebooks/3-case-registration.ipynb). Registers all MRI modalities to axial plane and saves patient cases as 100x256x256x3 (z,x,y,c) `BraTSID.npy` arrays (R:t1w, G:T1ce, B:T2). Additionally, registers [Task-1](https://www.synapse.org/#!Synapse:syn25829067/wiki/610863) segmentation masks to case and saves them as `BraTSID_seg.npy` 100x256x256 (z,x,y) arrays. This requires accepting Task-1 terms and downloading & extracting [this](https://www.kaggle.com/dschettler8845/load-task-1-dataset-comparison-w-task-2-dataset/data) set that @dschettler8845 uploaded. Here is a sample visualization of a registered case with tumor segmentation map.
+
+![registered_sample](./media/registered_sample.png)
+
+4. [Registered DS sanity check](./notebooks/4-registered-ds-sanity-check.ipynb) Show how to open registered case files and check that everything looks right visually. Saves [tumor map videos](./media/registered-tumor-map.mp4) for visualization.
 
 ## Environment setup and package installation
 
@@ -55,13 +67,20 @@ Install python packages
 pip install -r requirements.txt
 ```
 
-## Reading dicoms
+## Reading and registering new cases
+Check notebook #3 if you want to also get registered tumor segmentation annotations. For inferencing new cases, only `rgb_cube_arr` is required.
 
 ```
-from src.dicom_utils import get_uint8_rgb
+from src.registering import Registered_BraTS_Case
 
-dicom_path = "./input/rsna-miccai-brain-tumor-radiogenomic-classification/train/00000/FLAIR/Image-50.dcm"
-rgb_array = get_uint8_rgb(dicom_path)
+dicom_dir = "./input/rsna-miccai-brain-tumor-radiogenomic-classification/test/"
+resize_to=[256,256,100]
+reg = Registered_BraTS_Case(dicom_dir, resize_to)
+
+brat_id_str = "00709"
+
+rgb_cube_arr = reg.get_registered_case(brat_id_str)
+print(rgb_cube_arr.shape)
 ```
-
-![sample](./media/rgb-sample.png)
+Prints:
+`(100,256,256,3)`
