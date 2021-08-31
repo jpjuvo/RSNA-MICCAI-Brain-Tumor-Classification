@@ -84,10 +84,9 @@ class BraTS2021(Dataset):
     def __getitem__(self, index):
         sample = np.load(self.fn_list[index]).astype(np.float32)
         out_dict = {
-            'BraTSID' : os.path.basename(self.fn_list[index]).split('.')[0],
+            'BraTSID' : int(os.path.basename(self.fn_list[index]).split('.')[0]),
             'image' : sample
         }
-        
         if self.mode != "test":
             seg = np.load(self.seg_fn_list[index])
             # set seg to binary values
@@ -101,7 +100,7 @@ class BraTS2021(Dataset):
         
         # z-score norm each channel - done after augmentations
         if self.volume_normalize:
-            sample = out_dict['image'].copy()
+            sample = out_dict['image']
             sample_mean = np.mean(sample, axis=tuple([0,1,2]))
             sample_std = np.std(sample, axis=tuple([0,1,2])) + 1e-6
             sample = (sample - sample_mean) / sample_std
@@ -111,5 +110,14 @@ class BraTS2021(Dataset):
         else:
             out_dict['mean'] = np.array([0 for _ in range(sample.shape[3])])
             out_dict['std'] = np.array([1. for _ in range(sample.shape[3])])
+        
+        # convert values to torch and arrays
+        for key, val in out_dict.items():
+            if key == 'label':
+                out_dict[key] = np.array(val)
+            elif key == 'BraTSID':
+                out_dict[key] = np.array(val)
+            else:
+                out_dict[key] = torch.FloatTensor(val.copy())
             
         return out_dict
