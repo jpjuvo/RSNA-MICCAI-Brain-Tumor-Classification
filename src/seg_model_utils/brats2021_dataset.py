@@ -17,17 +17,24 @@ class BraTS2021(Dataset):
                  npy_fns_list,
                  label_list=[],
                  augmentations=None,
-                 volume_normalize=True):
+                 volume_normalize=True,
+                 segmentation_classes=True,
+                 max_out_size=(256,256,96)
+                ):
         """
         :param mode: 'train','val','test'
         :param npy_fns_list: list of numpy array paths
         :param label_list: list of binary label integers
         :param augmentations: 3D augmentations
         :param volume_normalize: z-score normalize each channel in sample
+        :param segmentation_classes: use two tumor segmentation classes for No-MGMT and MGMT 
+        :param max_out_size: max out dimensions (x,y,z), if data is larger, it is cropped to this
         """
         self.mode = mode
         self.augmentations = augmentations
         self.volume_normalize = volume_normalize
+        self.segmentation_classes = segmentation_classes
+        self.max_out_size = max_out_size
         
         self.seg_fn_list = []
         self.fn_list = npy_fns_list
@@ -87,6 +94,8 @@ class BraTS2021(Dataset):
             'BraTSID' : int(os.path.basename(self.fn_list[index]).split('.')[0]),
             'image' : sample
         }
+        
+        # Labels and augmentations
         if self.mode != "test":
             seg = np.load(self.seg_fn_list[index])
             # set seg to binary values
@@ -97,6 +106,21 @@ class BraTS2021(Dataset):
             
             if self.augmentations:
                 out_dict = self.augmentations(out_dict)
+            
+            
+            if self.segmentation_classes:
+                # split segmentation to two
+                empty_seg = np.zeros_like(out_dict['segmentation'])
+                if lbl == 0:
+                    out_dict['segmentation'] = np.stack([out_dict['segmentation'], empty_seg], axis=3)
+                else:
+                    out_dict['segmentation'] = np.stack([empty_seg, out_dict['segmentation']], axis=3)
+            else:
+                # Add channel dimension to segmentation
+                out_dict['segmentation'] = np.expand_dims(out_dict['segmentation'], axis=3)
+            
+            # swap channel axis in image with depth axis - torch wants channel first
+            out_dict['segmentation'] = np.swapaxes(out_dict['segmentation'], 0, 3)
         
         # z-score norm each channel - done after augmentations
         if self.volume_normalize:
@@ -110,6 +134,17 @@ class BraTS2021(Dataset):
         else:
             out_dict['mean'] = np.array([0 for _ in range(sample.shape[3])])
             out_dict['std'] = np.array([1. for _ in range(sample.shape[3])])
+        
+        # swap channel axis in image with depth axis - torch wants channel first
+        out_dict['image'] = np.swapaxes(out_dict['image'], 0, 3)
+        
+        # check that size doesn't exceed max size
+        im_shape = list(out_dict['image'].shape[1:])
+        for i, max_sz in enumerate(self.max_out_size):
+            im_shape[i] = min(im_shape[i], max_sz)
+        out_dict['image'] = out_dict['image'][:,:im_shape[0],:im_shape[1],:im_shape[2]]
+        if 'segmentation' in out_dict:
+            out_dict['segmentation'] = out_dict['segmentation'][:,:im_shape[0],:im_shape[1],:im_shape[2]]
         
         # convert values to torch and arrays
         for key, val in out_dict.items():

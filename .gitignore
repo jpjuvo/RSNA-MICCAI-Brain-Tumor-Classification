@@ -13,6 +13,8 @@ venv/
 /wandb
 /.neptune
 /yolov5
+/runs
+
 
 *.pth
 *.out
