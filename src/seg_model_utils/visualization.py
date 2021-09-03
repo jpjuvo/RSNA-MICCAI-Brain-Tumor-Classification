@@ -87,6 +87,9 @@ def show_mri_sample(sample, pred_mask=None, pred_lbl=None):
     n_root = int(np.ceil(np.sqrt(n_images)))
     n_cols = n_root * 2
     n_rows = n_root * 2
+    # special case fix to get with correct with small bs
+    if n_images == 2:
+        n_rows = 2
     
     fig_scale = 3
     f = plt.figure(figsize=(fig_scale*n_cols,fig_scale*n_rows))
@@ -133,26 +136,26 @@ def show_mri_sample(sample, pred_mask=None, pred_lbl=None):
     
         proj_ax = f.add_subplot(n_rows, n_cols, _subplot_index(index,1,1), projection='3d')
         proj_ax.scatter(*to_3d_points(im), color='gray', alpha=0.015, s=5, depthshade=False)
-        proj_ax.set_title('GT: Green=non-MGMT-tumor, Yellow=MGMT-tumor\nPRED: Blue=non-MGMT-tumor, Violet=MGMT-tumor', fontsize=8)
+        proj_ax.set_title('GT: Green=non-MGMT-tumor, Yellow=MGMT-tumor\nPRED: Blue=non-MGMT-tumor, Red=MGMT-tumor', fontsize=8)
         proj_ax.set_xticks([])                               
         proj_ax.set_yticks([])                               
         proj_ax.set_zticks([])
     
         if seg is not None:
-            for seg_chan, color in zip(range(seg.shape[0]),['green','yellow']):
+            for seg_chan, color in zip(range(seg.shape[3]),['green','yellow']):
                 coronal_ax.imshow(make_bg_transparent(seg[::-1,x//2,:,seg_chan], set_to_color=color), alpha=alpha)
                 sagittal_ax.imshow(make_bg_transparent(seg[::-1,:,y//2,seg_chan], set_to_color=color), alpha=alpha)
                 axial_ax.imshow(make_bg_transparent(seg[d//2,:,:,seg_chan], set_to_color=color), alpha=alpha)
-                proj_ax.scatter(*to_3d_points(seg[:,:,:,seg_chan]), color=color, s=5, alpha=0.1)
+                proj_ax.scatter(*to_3d_points(seg[:,:,:,seg_chan]), color=color, s=5, alpha=0.05)
     
         if pred_mask is not None:
             pred = np.swapaxes(pred_mask[index].cpu().numpy(), 0,3)
             pred = np.clip(pred, 0, 1.)
-            for seg_chan, color in zip(range(pred.shape[3]),['royalblue','violet']):
+            for seg_chan, color in zip(range(pred.shape[3]),['royalblue','red']):
                 coronal_ax.imshow(make_bg_transparent(pred[::-1,x//2,:, seg_chan], set_to_color=color, bg_th=0.5), alpha=alpha)
                 sagittal_ax.imshow(make_bg_transparent(pred[::-1,:,y//2, seg_chan], set_to_color=color, bg_th=0.5), alpha=alpha)
                 axial_ax.imshow(make_bg_transparent(pred[d//2,:,:, seg_chan], set_to_color=color, bg_th=0.5), alpha=alpha)
-                proj_ax.scatter(*to_3d_points(pred[:,:,:,seg_chan], th=0.5), color=color, s=5, alpha=0.1)
+                proj_ax.scatter(*to_3d_points(pred[:,:,:,seg_chan], th=0.5), color=color, s=5, alpha=0.05)
         
         # draw axial lines
         coronal_ax.plot([0,x-1],[d//2,d//2],'--',color='white', linewidth=1) # coronal horizontal
@@ -168,8 +171,12 @@ def show_mri_sample(sample, pred_mask=None, pred_lbl=None):
     width, height = bbox.width*f.dpi, bbox.height*f.dpi
     width *= 1.05
     height *= 1.05
+    #if n_images == 2:
+    #    n_rows = 2
     
     for row in range(0, n_rows,2):
+        if n_images == 2 and row > 0:
+            break
         for col in range(0, n_cols,2):
             different_color = (row//2) % 2 == (col//2) % 2
             color = (1,1,1) if different_color else (0.8,0.8,0.8)
@@ -177,8 +184,8 @@ def show_mri_sample(sample, pred_mask=None, pred_lbl=None):
             f.patches.extend([
                 plt.Rectangle(
                     (width * col / n_cols, height * (n_rows - row - 2) / n_rows), 
-                    width / (n_cols//2), 
-                    height / (n_rows//2),
+                    width / max(1,n_cols//2), 
+                    height / max(1,n_rows//2),
                     fill=True, 
                     color=color,  
                     zorder=-1, # below axes
