@@ -21,3 +21,6 @@ pretrainedmodels>=0.7.4
 plotly>=5.1.0
 fastai>=2.4.0
 SimpleITK>=2.1.0
+torchio>=0.18.54
+optuna>=2.9.1
+xgboost>=1.7.1
