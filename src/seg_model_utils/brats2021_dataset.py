@@ -7,6 +7,8 @@ import torch
 from torch.utils.data import Dataset
 import matplotlib.pyplot as plt
 import cv2
+import torchio as tio
+from seg_model_utils.torchio_transforms import *
 
 class BraTS2021(Dataset):
     """
@@ -17,24 +19,30 @@ class BraTS2021(Dataset):
                  npy_fns_list,
                  label_list=[],
                  augmentations=None,
+                 tio_augmentations=None,
                  volume_normalize=True,
-                 segmentation_classes=True,
-                 max_out_size=(256,256,96)
+                 segmentation_classes=False,
+                 max_out_size=(256,256,96),
+                 label_smoothing=0.4
                 ):
         """
         :param mode: 'train','val','test'
         :param npy_fns_list: list of numpy array paths
         :param label_list: list of binary label integers
         :param augmentations: 3D augmentations
+        :param tio_augmentations: TorchIO 3D augmentations
         :param volume_normalize: z-score normalize each channel in sample
         :param segmentation_classes: use two tumor segmentation classes for No-MGMT and MGMT 
         :param max_out_size: max out dimensions (x,y,z), if data is larger, it is cropped to this
+        :param label_smoothing: applied to label values only on train mode
         """
         self.mode = mode
         self.augmentations = augmentations
+        self.tio_augmentations = tio_augmentations
         self.volume_normalize = volume_normalize
         self.segmentation_classes = segmentation_classes
         self.max_out_size = max_out_size
+        self.label_smoothing = label_smoothing
         
         self.seg_fn_list = []
         self.fn_list = npy_fns_list
@@ -80,7 +88,7 @@ class BraTS2021(Dataset):
         ########################
         
         # shuffle samples
-        if self.mode != "test":
+        if self.mode == "train":
             all_lists = list(zip(self.fn_list, self.seg_fn_list, self.label_list))
             random.shuffle(all_lists)
             self.fn_list, self.seg_fn_list, self.label_list = zip(*all_lists)
@@ -90,24 +98,47 @@ class BraTS2021(Dataset):
 
     def __getitem__(self, index):
         sample = np.load(self.fn_list[index]).astype(np.float32)
+        # fillna
+        sample = np.nan_to_num(sample, nan=0)
         out_dict = {
             'BraTSID' : int(os.path.basename(self.fn_list[index]).split('.')[0]),
             'image' : sample
         }
         
-        # Labels and augmentations
+        # Calculate stats from full image
+        sample_mean = np.mean(sample, axis=tuple([0,1,2]))
+        sample_std = np.std(sample, axis=tuple([0,1,2])) + 1e-6
+        
+        # Load labels
         if self.mode != "test":
             seg = np.load(self.seg_fn_list[index])
             # set seg to binary values
             seg = (seg > 0).astype(np.float32)
             lbl = self.label_list[index]
+            if self.mode == 'train':
+                if lbl > 0.5:
+                    lbl = lbl - self.label_smoothing
+                else:
+                    lbl = self.label_smoothing
             out_dict['segmentation'] = seg 
             out_dict['label'] = lbl
-            
-            if self.augmentations:
-                out_dict = self.augmentations(out_dict)
-            
-            
+        
+        # augment
+        if self.augmentations:
+            out_dict = self.augmentations(out_dict)
+        
+        # TorchIO augs
+        if self.tio_augmentations:
+            subject = tio.Subject(
+                rgb_image = arr_2_tio_image(out_dict['image']),
+                segmentation = arr_2_tio_seg_image(out_dict['segmentation'])
+            )
+            subject = self.tio_augmentations(subject)
+            out_dict['image'] = subject.rgb_image.numpy().swapaxes(0,3)
+            out_dict['segmentation'] = subject.segmentation.numpy().swapaxes(0,3)[:,:,:,0]
+        
+        # Process segmentation map
+        if 'segmentation' in out_dict:
             if self.segmentation_classes:
                 # split segmentation to two
                 empty_seg = np.zeros_like(out_dict['segmentation'])
@@ -125,8 +156,6 @@ class BraTS2021(Dataset):
         # z-score norm each channel - done after augmentations
         if self.volume_normalize:
             sample = out_dict['image']
-            sample_mean = np.mean(sample, axis=tuple([0,1,2]))
-            sample_std = np.std(sample, axis=tuple([0,1,2])) + 1e-6
             sample = (sample - sample_mean) / sample_std
             out_dict['image'] = sample
             out_dict['mean'] = sample_mean

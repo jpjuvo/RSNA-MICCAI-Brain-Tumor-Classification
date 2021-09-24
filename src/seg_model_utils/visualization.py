@@ -27,7 +27,7 @@ def make_bg_transparent(im, bg_th=0.0, set_to_color=None):
         if set_to_color == 'green':
             merged = np.stack([zeros,c2,zeros,alpha_c], axis=-1)
         elif set_to_color == 'red':
-            merged = np.stack([zeros,zeros,c3,alpha_c], axis=-1)
+            merged = np.stack([c1,zeros,zeros,alpha_c], axis=-1)
         elif set_to_color == 'royalblue':
             merged = np.stack([c1,zeros,zeros,alpha_c], axis=-1)
         elif set_to_color == 'violet':
@@ -63,7 +63,7 @@ def adjust_saturation(img, sat_scale=0.3):
     hsv_im = np.stack([h,s,v],axis=2).astype(np.uint8)
     return cv2.cvtColor(hsv_im, cv2.COLOR_HSV2RGB) / 255.
 
-def show_mri_sample(sample, pred_mask=None, pred_lbl=None):
+def show_mri_sample(sample, pred_mask=None, pred_lbl=None, seg_downsample=None, save_fn=None):
     """ Plot sample in three projections """
     plt.close('all')
     
@@ -91,7 +91,7 @@ def show_mri_sample(sample, pred_mask=None, pred_lbl=None):
     if n_images == 2:
         n_rows = 2
     
-    fig_scale = 3
+    fig_scale = 2
     f = plt.figure(figsize=(fig_scale*n_cols,fig_scale*n_rows))
     
     # Read additional meta from batch
@@ -109,6 +109,10 @@ def show_mri_sample(sample, pred_mask=None, pred_lbl=None):
         im = ims[index]
         seg = segs[index]
         seg = np.swapaxes(seg, 0,3)
+        # upsample seg back to original size if it has been downsampled
+        if seg_downsample is not None:
+            seg = seg.repeat(seg_downsample, axis=0).repeat(seg_downsample, axis=1).repeat(seg_downsample, axis=2)
+        
         # Normalize images for visualization
         im = np.swapaxes(im, 0,3) # swap depth and chan axes
         im = (im * stds[index]) + means[index]
@@ -117,7 +121,7 @@ def show_mri_sample(sample, pred_mask=None, pred_lbl=None):
         if labels is not None:
             title += f', GT-MGMT:{labels[index]}'
         if pred_lbl is not None:
-            title += f', Pred-MGMT:{pred_lbl[index]}'
+            title += f'\nPred-MGMT:{float(pred_lbl[index][0]):.3f}'
     
         d,x,y,c = im.shape
         
@@ -136,13 +140,13 @@ def show_mri_sample(sample, pred_mask=None, pred_lbl=None):
     
         proj_ax = f.add_subplot(n_rows, n_cols, _subplot_index(index,1,1), projection='3d')
         proj_ax.scatter(*to_3d_points(im), color='gray', alpha=0.015, s=5, depthshade=False)
-        proj_ax.set_title('GT: Green=non-MGMT-tumor, Yellow=MGMT-tumor\nPRED: Blue=non-MGMT-tumor, Red=MGMT-tumor', fontsize=8)
+        proj_ax.set_title(f'Green=GT-tumor, Red=Pred-tumor\n{title}', fontsize=6)
         proj_ax.set_xticks([])                               
         proj_ax.set_yticks([])                               
         proj_ax.set_zticks([])
     
         if seg is not None:
-            for seg_chan, color in zip(range(seg.shape[3]),['green','yellow']):
+            for seg_chan, color in zip(range(seg.shape[3]),['green']):
                 coronal_ax.imshow(make_bg_transparent(seg[::-1,x//2,:,seg_chan], set_to_color=color), alpha=alpha)
                 sagittal_ax.imshow(make_bg_transparent(seg[::-1,:,y//2,seg_chan], set_to_color=color), alpha=alpha)
                 axial_ax.imshow(make_bg_transparent(seg[d//2,:,:,seg_chan], set_to_color=color), alpha=alpha)
@@ -151,7 +155,10 @@ def show_mri_sample(sample, pred_mask=None, pred_lbl=None):
         if pred_mask is not None:
             pred = np.swapaxes(pred_mask[index].cpu().numpy(), 0,3)
             pred = np.clip(pred, 0, 1.)
-            for seg_chan, color in zip(range(pred.shape[3]),['royalblue','red']):
+            # upsample seg back to original size if it has been downsampled
+            if seg_downsample is not None:
+                pred = pred.repeat(seg_downsample, axis=0).repeat(seg_downsample, axis=1).repeat(seg_downsample, axis=2)
+            for seg_chan, color in zip(range(pred.shape[3]),['red']):
                 coronal_ax.imshow(make_bg_transparent(pred[::-1,x//2,:, seg_chan], set_to_color=color, bg_th=0.5), alpha=alpha)
                 sagittal_ax.imshow(make_bg_transparent(pred[::-1,:,y//2, seg_chan], set_to_color=color, bg_th=0.5), alpha=alpha)
                 axial_ax.imshow(make_bg_transparent(pred[d//2,:,:, seg_chan], set_to_color=color, bg_th=0.5), alpha=alpha)
@@ -194,4 +201,7 @@ def show_mri_sample(sample, pred_mask=None, pred_lbl=None):
                     figure=f)
             ])
     
-    plt.show()
+    if save_fn is not None:
+        plt.savefig(save_fn, transparent=False)
+    else:
+        plt.show()

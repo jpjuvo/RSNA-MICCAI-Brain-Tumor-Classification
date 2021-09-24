@@ -41,6 +41,9 @@ class ComposeTransforms(object):
         for t in self.transforms:
             sample = t(sample)
         return sample
+    
+from scipy.interpolate import RegularGridInterpolator
+from scipy.ndimage.filters import gaussian_filter
 
 def stack_seg_2_image(sample):
     image = sample['image']
@@ -141,18 +144,38 @@ class GaussianNoise(object):
 def random_crop_to_size(sample, crop_sz):
     
     im = sample['image'].copy()
-    seg = sample['segmentation'].copy()
     shape = im.shape
     
+    if 'segmentation' in sample:
+        seg = sample['segmentation'].copy()
+    else:
+        seg = None
+        
+    # choose randomly but check that at least one tumor pixel is included
     width, height, depth = crop_sz
-    d = np.random.randint(0, shape[0] - depth - 1)
-    x = np.random.randint(0, shape[1] - width - 1)
-    y = np.random.randint(0, shape[2] - height - 1)
+    
+    sum_tumor = 0
+    n_round = 0
+    d,x,y = 0,0,0
+    while sum_tumor == 0 and n_round < 1000:
+        n_round += 1
+        d = np.random.randint(0, shape[0] - depth - 1)
+        x = np.random.randint(0, shape[1] - width - 1)
+        y = np.random.randint(0, shape[2] - height - 1)
+        if seg is not None:
+            check = seg[d:d+depth, x:x+width, y:y+height]
+            sum_tumor = np.sum(check)
+        else:
+            sum_tumor = 1
+    
+    assert n_round < 1000, f'no segmentation found in {sample["BraTSID"]}'
     
     im = im[d:d+depth, x:x+width, y:y+height,:]
-    seg = seg[d:d+depth, x:x+width, y:y+height]
     sample['image'] = im
-    sample['segmentation'] = seg
+    
+    if seg is not None:
+        seg = check
+        sample['segmentation'] = seg
     
     return sample
 
@@ -245,3 +268,14 @@ class RandomRotation(object):
         if not augment:
             return sample
         return random_rotate3D(sample, self.min_angle, self.max_angle)
+    
+class DownSampleSegmentation(object):
+    def __init__(self, ds=4):
+        self.ds = ds
+        
+    def __call__(self, sample):
+        if 'segmentation' in sample:
+            seg = sample['segmentation']
+            seg = seg[::self.ds, ::self.ds, ::self.ds]
+            sample['segmentation'] = seg
+        return sample
