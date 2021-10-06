@@ -84,3 +84,29 @@ print(rgb_cube_arr.shape)
 ```
 Prints:
 `(100,256,256,3)`
+
+## Training segmentation model
+
+Before training, create a `wandb_params.json` file in root folder with wandb profile name.
+
+Example file:
+```
+{
+    "entity": "your_profile_name",
+    "project": "raehmae-miccai-brainclf"
+}
+```
+
+Train 5 fold models and one model with all training data:
+
+`sh train_seg_folds.sh`
+
+## Training segmentation model
+
+Before training, configure `wandb_params.json` file.
+
+Train 5 fold models and one model with all training data:
+
+`sh train_clf_folds.sh`
+
+![training params](./media/miccai_cnn_training_parameters.png)

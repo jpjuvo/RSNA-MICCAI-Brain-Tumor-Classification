@@ -34,8 +34,57 @@ from fastai.vision.all import *
 from fastai.data.core import DataLoaders
 from fastai.callback.all import *
 from fastai.callback.wandb import WandbCallback
+import torch.nn.functional as F
 
 LOG_WANDB = False
+
+# This is modified from https://libauc.org/
+class AUCMLoss(torch.nn.Module):
+    """
+    AUCM Loss with squared-hinge function: a novel loss function to directly optimize AUROC
+    
+    inputs:
+        margin: margin term for AUCM loss, e.g., m in [0, 1]
+        imratio: imbalance ratio, i.e., the ratio of number of postive samples to number of total samples
+    outputs:
+        loss value 
+    
+    Reference: 
+        Yuan, Z., Yan, Y., Sonka, M. and Yang, T., 
+        Large-scale Robust Deep AUC Maximization: A New Surrogate Loss and Empirical Studies on Medical Image Classification. 
+        International Conference on Computer Vision (ICCV 2021)
+    Link:
+        https://arxiv.org/abs/2012.03173
+    """
+    def __init__(self, margin=1.0, imratio=None, device=None):
+        super(AUCMLoss, self).__init__()
+        if not device:
+            self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        else:
+            self.device = device   
+        self.margin = margin
+        self.p = imratio
+        # https://discuss.pytorch.org/t/valueerror-cant-optimize-a-non-leaf-tensor/21751
+        self.a = torch.zeros(1, dtype=torch.float32, device=self.device, requires_grad=True).to(self.device) #cuda()
+        self.b = torch.zeros(1, dtype=torch.float32, device=self.device,  requires_grad=True).to(self.device) #.cuda()
+        self.alpha = torch.zeros(1, dtype=torch.float32, device=self.device, requires_grad=True).to(self.device) #.cuda()
+        
+    def forward(self, input, target):
+
+        y_pred = (torch.softmax(input, 1)[:,1]).unsqueeze(1)
+        y_true = target.unsqueeze(1)
+
+        if self.p is None:
+           self.p = (y_true==1).float().sum()/y_true.shape[0]   
+     
+        y_pred = y_pred.reshape(-1, 1) # be carefull about these shapes
+        y_true = y_true.reshape(-1, 1) 
+        loss = (1-self.p)*torch.mean((y_pred - self.a)**2*(1==y_true).float()) + \
+                    self.p*torch.mean((y_pred - self.b)**2*(0==y_true).float())   + \
+                    2*self.alpha*(self.p*(1-self.p)*self.margin + \
+                    torch.mean((self.p*y_pred*(0==y_true).float() - (1-self.p)*y_pred*(1==y_true).float())) )- \
+                    self.p*(1-self.p)*self.alpha**2
+        return loss
 
 def datestr():
     now = time.gmtime()
@@ -202,10 +251,10 @@ def plot_metrics(self: Recorder, nrows=None, ncols=None, figsize=None, **kwargs)
 
 def main(fold:int, train_df_fn:str, npy_dir:str, bs:int, epochs:int, 
         lr:float=1e-4, arch:str='resnet34', ps:float=0.6, 
-        optim:str='ranger', im_sz:int=256):
+        optim:str='ranger', im_sz:int=256, loss_name:str="rocstar"):
 
     name = f'fold-{fold}'
-    group_name = f'{arch}_bs{bs}_ep{epochs}_lr{lr}_ps{ps}_{optim}_sz{im_sz}'
+    group_name = f'{arch}_bs{bs}_ep{epochs}_{loss_name}_lr{lr}_ps{ps}_{optim}_sz{im_sz}'
     train_dir = npy_dir
 
     out_folder = os.path.join('./output', group_name, name)
@@ -227,7 +276,7 @@ def main(fold:int, train_df_fn:str, npy_dir:str, bs:int, epochs:int,
             config={
                 'bs':bs, 'epochs':epochs, 'fold':fold,
                 'ep':epochs, 'lr':lr, 'arch':arch, 'ps':ps, 
-                'optim':optim, 'sz':im_sz 
+                'optim':optim, 'sz':im_sz, 'loss_name': loss_name
                 },
             sync_tensorboard=True)
         LOG_WANDB = True
@@ -293,6 +342,15 @@ def main(fold:int, train_df_fn:str, npy_dir:str, bs:int, epochs:int,
     else:
         opt_func = fastai.optimizer.Adam
 
+    if loss_name == 'rocstar':
+        second_loss = RocStarLoss()
+    elif loss_name == 'bce':
+        second_loss = loss
+    elif loss_name == 'libauc':
+        second_loss = AUCMLoss()
+    else:
+        raise Exception
+
     learn = cnn_learner(
             dls, 
             base,
@@ -314,9 +372,8 @@ def main(fold:int, train_df_fn:str, npy_dir:str, bs:int, epochs:int,
     model_path = os.path.join('..', out_folder, 'final')
     cbs = [WandbCallback(log=None, log_preds=False, log_model=False)] if LOG_WANDB else []
     
-    # continue with rocstar loss
-    roc_loss = RocStarLoss()
-    learn.loss_func = roc_loss
+    # continue with main loss
+    learn.loss_func = second_loss
     learn.fit_flat_cos(epochs, lr, div_final=2, pct_start=0.99, cbs=cbs)
     
     learn.save(model_path, with_opt=False)
@@ -396,6 +453,7 @@ if __name__ == '__main__':
     parser.add_argument('--ps', type=float, default=0.6)
     parser.add_argument('--optim', type=str, default='ranger')
     parser.add_argument('--im_sz', type=int, default=256)
+    parser.add_argument('--loss_name', type=str, default='auclib')
 
 
     params = parser.parse_args()
@@ -409,5 +467,6 @@ if __name__ == '__main__':
     ps = params.ps
     optim = params.optim
     im_sz = params.im_sz
+    loss_name = params.loss_name
     
-    main(fold, train_df, npy_dir, bs, epochs, lr, arch, ps, optim, im_sz)
+    main(fold, train_df, npy_dir, bs, epochs, lr, arch, ps, optim, im_sz, loss_name)
