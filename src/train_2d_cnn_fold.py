@@ -35,6 +35,9 @@ from fastai.data.core import DataLoaders
 from fastai.callback.all import *
 from fastai.callback.wandb import WandbCallback
 import torch.nn.functional as F
+from timm import create_model
+from fastai.vision.learner import _update_first_layer
+from fastai.vision.learner import _add_norm
 
 LOG_WANDB = False
 
@@ -249,6 +252,46 @@ def plot_metrics(self: Recorder, nrows=None, ncols=None, figsize=None, **kwargs)
     else:
         plt.show()
 
+# timm + fastai functions copied from https://walkwithfastai.com/vision.external.timm
+def create_timm_body(arch:str, pretrained=True, cut=None, n_in=3):
+    "Creates a body from any model in the `timm` library."
+    if 'vit' in arch:
+        model = create_model(arch, pretrained=pretrained, num_classes=0)
+    else:
+        model = create_model(arch, pretrained=pretrained, num_classes=0, global_pool='')
+    _update_first_layer(model, n_in, pretrained)
+    if cut is None:
+        ll = list(enumerate(model.children()))
+        cut = next(i for i,o in reversed(ll) if has_pool_type(o))
+    if isinstance(cut, int): return nn.Sequential(*list(model.children())[:cut])
+    elif callable(cut): return cut(model)
+    else: raise NamedError("cut must be either integer or function")
+
+def create_timm_model(arch:str, n_out, cut=None, pretrained=True, n_in=3, init=nn.init.kaiming_normal_, custom_head=None,
+                     concat_pool=True, **kwargs):
+    "Create custom architecture using `arch`, `n_in` and `n_out` from the `timm` library"
+    body = create_timm_body(arch, pretrained, None, n_in)
+    if custom_head is None:
+        nf = num_features_model(nn.Sequential(*body.children()))
+        head = create_head(nf, n_out, concat_pool=concat_pool, **kwargs)
+    else: head = custom_head
+    model = nn.Sequential(body, head)
+    if init is not None: apply_init(model[1], init)
+    return model
+
+def timm_learner(dls, arch:str, loss_func=None, pretrained=True, cut=None, splitter=None,
+                y_range=None, config=None, n_out=None, normalize=True, **kwargs):
+    "Build a convnet style learner from `dls` and `arch` using the `timm` library"
+    if config is None: config = {}
+    if n_out is None: n_out = get_c(dls)
+    assert n_out, "`n_out` is not defined, and could not be inferred from data, set `dls.c` or pass `n_out`"
+    if y_range is None and 'y_range' in config: y_range = config.pop('y_range')
+    model = create_timm_model(arch, n_out, default_split, pretrained, y_range=y_range, **config)
+    kwargs.pop('ps')
+    learn = Learner(dls, model, loss_func=loss_func, splitter=default_split, **kwargs)
+    if pretrained: learn.freeze()
+    return learn
+
 def main(fold:int, train_df_fn:str, npy_dir:str, bs:int, epochs:int, 
         lr:float=1e-4, arch:str='resnet34', ps:float=0.6, 
         optim:str='ranger', im_sz:int=256, loss_name:str="rocstar"):
@@ -321,6 +364,7 @@ def main(fold:int, train_df_fn:str, npy_dir:str, bs:int, epochs:int,
     dls = DataLoaders.from_dsets(ds_t, ds_v, bs=bs, device='cuda', num_workers=num_workers)
 
     loss = LabelSmoothingCrossEntropyFlat(eps=0.2)
+    create_learner = cnn_learner
 
     if arch == 'densetnet121':
         base = densenet121
@@ -335,7 +379,8 @@ def main(fold:int, train_df_fn:str, npy_dir:str, bs:int, epochs:int,
     elif arch == 'densenet169':
         base = densenet169
     else:
-        raise Exception
+        create_learner = timm_learner
+        base = arch
     
     if optim == "ranger":
         opt_func = fastai.optimizer.ranger
@@ -351,7 +396,7 @@ def main(fold:int, train_df_fn:str, npy_dir:str, bs:int, epochs:int,
     else:
         raise Exception
 
-    learn = cnn_learner(
+    learn = create_learner(
             dls, 
             base,
             pretrained=True,
