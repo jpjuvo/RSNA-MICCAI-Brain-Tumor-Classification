@@ -1,17 +1,17 @@
 ## RSNA-MICCAI Brain Tumor Radiogenomic Classification
 
-Team Rähmä AI solution for [RSNA-MICCAI Brain Tumor Radiogenomic Classification 2021](https://www.kaggle.com/c/rsna-miccai-brain-tumor-radiogenomic-classification)
+Team Rähmä AI's solution to [RSNA-MICCAI Brain Tumor Radiogenomic Classification 2021](https://www.kaggle.com/c/rsna-miccai-brain-tumor-radiogenomic-classification)
 
 ### Task
-Predict the status of an MGMT promother methylation important for brain cancer treatment.
+Predict the status of an MGMT promoter methylation important for brain cancer treatment.
 
 
 ### Solution Overview
-- Four provided MRI modalities and tumor segmentation masks were cropped to brain region and registered to aligned 3D RGB + 3D tumor masks.
+- Four MRI modalities and tumor segmentation masks were cropped to the brain region and registered to aligned 3D RGB + 3D tumor masks.
 - 3D Unet was trained to segment tumor. Pretrained weights were loaded from [2D MRI tumor segmentation model](https://github.com/mateuszbuda/brain-segmentation-pytorch).
 - Linear models were trained to predict MGMT status from segmentation prediction radiomics features (shape, intensity stats, location)
 - 2D CNN models were trained to predict MGMT status from tumor region T2W axial slices.
-- Three linear segmentation feature models and 3 2D CNN models were ensembled to predict MGMT status. Ensemble was an average of Z-score normalized model predictions.
+- Three linear segmentation feature models and 3 2D CNN models were ensembled to predict MGMT status. The ensemble was an average of Z-score normalized model predictions.
 
 ----------------------------------
 
