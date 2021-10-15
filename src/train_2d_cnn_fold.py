@@ -296,9 +296,11 @@ def main(fold:int, train_df_fn:str, npy_dir:str, bs:int, epochs:int,
         lr:float=1e-4, arch:str='resnet34', ps:float=0.6, 
         optim:str='ranger', im_sz:int=256, loss_name:str="rocstar"):
 
+    modality = str(os.path.dirname(npy_dir)).split('_')[-1]
     name = f'fold-{fold}'
-    group_name = f'{arch}_bs{bs}_ep{epochs}_{loss_name}_lr{lr}_ps{ps}_{optim}_sz{im_sz}'
+    group_name = f'{modality}_{arch}_bs{bs}_ep{epochs}_{loss_name}_lr{lr}_ps{ps}_{optim}_sz{im_sz}'
     train_dir = npy_dir
+    
 
     out_folder = os.path.join('./output', group_name, name)
     make_dirs(out_folder)
@@ -315,11 +317,12 @@ def main(fold:int, train_df_fn:str, npy_dir:str, bs:int, epochs:int,
             config = json.load(f)
         wandb.init(**config,
             name=name, group=group_name,
-            tags=['MGMT-classification', f'fold-{fold}'], 
+            tags=['MGMT-classification', f'fold-{fold}', modality], 
             config={
                 'bs':bs, 'epochs':epochs, 'fold':fold,
                 'ep':epochs, 'lr':lr, 'arch':arch, 'ps':ps, 
-                'optim':optim, 'sz':im_sz, 'loss_name': loss_name
+                'optim':optim, 'sz':im_sz, 'loss_name': loss_name,
+                'modality' : modality
                 },
             sync_tensorboard=True)
         LOG_WANDB = True
@@ -341,7 +344,7 @@ def main(fold:int, train_df_fn:str, npy_dir:str, bs:int, epochs:int,
         tio.RandomNoise(p=0.1),
         tio.RandomAnisotropy(p=0.05),
         tio.RandomBlur(p=0.1),
-        tio.RandomGamma(p=0.15),
+        tio.RandomGamma(0.1, p=0.15),
     ])
 
     ds_t = MICCAI2DDataset(
@@ -417,6 +420,10 @@ def main(fold:int, train_df_fn:str, npy_dir:str, bs:int, epochs:int,
     model_path = os.path.join('..', out_folder, 'final')
     cbs = [WandbCallback(log=None, log_preds=False, log_model=False)] if LOG_WANDB else []
     
+    #best_path = os.path.join('..', out_folder, 'best')
+    #save_cb = SaveModelCallback(monitor='roc_auc_score', fname=best_path, reset_on_fit=True)
+    #cbs.append(save_cb)
+
     # continue with main loss
     learn.loss_func = second_loss
     learn.fit_flat_cos(epochs, lr, div_final=2, pct_start=0.99, cbs=cbs)

@@ -70,6 +70,14 @@ class MICCAI2DDataset(Dataset):
         image = image * 2 - 1
         return image
     
+    @staticmethod
+    def _random_noise(image):
+        """ To [-1,1] range noise """
+        image = np.random.standard_normal(image.shape).astype(np.float32)
+        image = (image - np.min(image)) / (np.max(image) - np.min(image) + 1e-6)
+        image = image * 2 - 1
+        return image
+
     def _resize(self, image):
         image = cv2.resize(image, self.image_size, cv2.INTER_LINEAR)
         return image
@@ -145,8 +153,12 @@ class MICCAI2DDataset(Dataset):
         # resize
         image = self._resize(image)
         # normalize each patient
-        image = self._normalize(image, min_arr, max_arr)
-        
+        if min_arr == max_arr:
+            image = self._random_noise(image)
+        else:
+            image = self._normalize(image, min_arr, max_arr)
+        image = np.nan_to_num(image)
+
         # to 3chan rgb
         channels = [image, image, image]
         image = np.stack(channels)
